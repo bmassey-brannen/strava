@@ -1,0 +1,197 @@
+// Global variables
+var CLIENT_ID = '<Insert Client ID>';
+var CLIENT_SECRET = '<Insert Client Secret>';
+
+function storeRefreshToken() {
+    var refreshToken = '<Insert Refresh Token>';
+    PropertiesService.getScriptProperties().setProperty('refreshToken', refreshToken);
+}
+
+function authorizeWithStrava() {
+    var authorizationUrl = "https://www.strava.com/oauth/authorize?" +
+        "client_id=" + CLIENT_ID +
+        "&redirect_uri=" + ScriptApp.getService().getUrl() +
+        "&response_type=code" +
+        "&scope=read_all,activity:read_all";
+    
+    // Logging the authorization URL for user to manually open and authorize
+    Logger.log("Open the following URL to authorize with Strava: " + authorizationUrl);
+}
+
+function doGet(e) {
+    var code = e.parameter.code;
+
+    var tokenResponse = UrlFetchApp.fetch('https://www.strava.com/oauth/token', {
+        method: 'post',
+        payload: {
+            client_id: CLIENT_ID,
+            client_secret: CLIENT_SECRET,
+            code: code,
+            grant_type: 'authorization_code'
+        }
+    });
+
+    var tokens = JSON.parse(tokenResponse.getContentText());
+    PropertiesService.getScriptProperties().setProperty('refreshToken', tokens.refresh_token);
+    fetchStravaData(tokens.access_token);
+
+    return ContentService.createTextOutput("Strava data has been fetched successfully and inserted into the 'Activites_Data' sheet.");
+}
+
+function fetchStravaData() {
+    Logger.log("Fetching Strava data...");
+
+    var refreshedAccessToken = refreshToken();
+    if (!refreshedAccessToken) {
+        Logger.log("Access token could not be refreshed or is invalid.");
+        return;
+    }
+
+    var accessToken = refreshedAccessToken.access_token;
+
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Activites_Data");
+    
+    // Clear data from columns A to AE but retain headers
+    sheet.getRange("A2:AE" + sheet.getLastRow()).clearContent();
+    
+    var perPage = 200;
+    var page = 1;
+    var activities = [];
+    
+     do {
+        var activitiesResponse = UrlFetchApp.fetch('https://www.strava.com/api/v3/athlete/activities?page=' + page + '&per_page=' + perPage, {
+            headers: {
+                'Authorization': 'Bearer ' + accessToken
+            },
+            muteHttpExceptions: true
+        });
+
+        var parsedResponse;
+        try {
+            parsedResponse = JSON.parse(activitiesResponse.getContentText());
+            activities = activities.concat(parsedResponse);
+        } catch (error) {
+            Logger.log("Error parsing the activities response: " + error);
+            return;
+        }
+
+        page++;
+
+    } while (parsedResponse && parsedResponse.length === perPage);
+
+    // Insert the logging here
+    Logger.log("Retrieved " + activities.length + " activities from Strava.");
+    Logger.log(activities);
+
+    
+     var headers = ["name", "distance", "moving_time", "elapsed_time", "total_elevation_gain", "type", "sport_type", "id", "start_date", "start_date_local", "timezone", "utc_offset", "achievement_count", "kudos_count", "comment_count", "athlete_count", "average_speed", "max_speed", "has_heartrate", "average_heartrate", "max_heartrate", "elev_high", "elev_low", "upload_id", "upload_id_str", "external_id", "pr_count", "total_photo_count", "has_kudoed", "start_latitude", "start_longitude", "end_latitude", "end_longitude"];
+
+    activities.sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
+
+    sheet.getRange("A2:AD" + sheet.getLastRow()).clearContent();
+
+    for (var i = 0; i < activities.length; i++) {
+        var row = headers.map(function(header) {
+             if (header === 'start_latitude') {
+                  return activities[i]['start_latlng'] ? activities[i]['start_latlng'][0] : '';
+              }
+              if (header === 'start_longitude') {
+                  return activities[i]['start_latlng'] ? activities[i]['start_latlng'][1] : '';
+              }
+              if (header === 'end_latitude') {
+                  return activities[i]['end_latlng'] ? activities[i]['end_latlng'][0] : '';
+              }
+              if (header === 'end_longitude') {
+                  return activities[i]['end_latlng'] ? activities[i]['end_latlng'][1] : '';
+              }
+              return activities[i][header] || '';
+            
+            //return activities[i][header] || '';
+        });
+        sheet.getRange(i + 2, 1, 1, headers.length).setValues([row]);
+    }
+
+    if (activities.length) {
+        PropertiesService.getScriptProperties().setProperty('lastActivityDate', activities[0].start_date_local);
+    }
+}
+
+
+function refreshToken() {
+    var refreshToken = PropertiesService.getScriptProperties().getProperty('refreshToken');
+    var response = UrlFetchApp.fetch('https://www.strava.com/oauth/token', {
+        method: 'post',
+        payload: {
+            client_id: CLIENT_ID,
+            client_secret: CLIENT_SECRET,
+            refresh_token: refreshToken,
+            grant_type: 'refresh_token'
+        },
+        muteHttpExceptions: true
+    });
+
+    try {
+        var tokens = JSON.parse(response.getContentText());
+        if (tokens && tokens.access_token) {
+            PropertiesService.getScriptProperties().setProperty('refreshToken', tokens.refresh_token);
+            return tokens;
+        } else {
+            return null;
+        }
+    } catch (error) {
+        Logger.log("Error parsing the token refresh response: " + error);
+        return null;
+    }
+}
+
+function fetchAvailableFields() {
+    Logger.log("Fetching available fields...");
+
+    var refreshedAccessToken = refreshToken();
+    if (!refreshedAccessToken) {
+        Logger.log("Access token could not be refreshed or is invalid.");
+        return;
+    }
+
+    var accessToken = refreshedAccessToken.access_token;
+
+    var perPage = 1; // Fetching only one activity to check the fields
+    var activitiesResponse = UrlFetchApp.fetch('https://www.strava.com/api/v3/athlete/activities?page=1&per_page=' + perPage, {
+        headers: {
+            'Authorization': 'Bearer ' + accessToken
+        },
+        muteHttpExceptions: true
+    });
+
+    var parsedResponse;
+    try {
+        parsedResponse = JSON.parse(activitiesResponse.getContentText());
+    } catch (error) {
+        Logger.log("Error parsing the activities response: " + error);
+        return;
+    }
+
+    if (!parsedResponse || !parsedResponse.length) {
+        Logger.log("No activities found.");
+        return;
+    }
+
+    var activity = parsedResponse[0];
+    var fieldNames = Object.keys(activity);
+
+    // Write these field names to the "Available Fields" sheet
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Available Fields");
+    if (!sheet) {
+        // Create the sheet if it doesn't exist
+        sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Available Fields");
+    }
+
+    // Clear any existing content
+    sheet.clearContents();
+
+    for (var i = 0; i < fieldNames.length; i++) {
+        sheet.getRange(i + 1, 1).setValue(fieldNames[i]);
+    }
+
+    Logger.log("Retrieved and stored available fields from Strava.");
+}
