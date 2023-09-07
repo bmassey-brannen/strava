@@ -49,7 +49,7 @@ function fetchStravaData() {
 
     var accessToken = refreshedAccessToken.access_token;
 
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Activites_Data");
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("<INSERT SHEET NAME>");
     
     // Clear data from columns A to AE but retain headers
     sheet.getRange("A2:AE" + sheet.getLastRow()).clearContent();
